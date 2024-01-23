@@ -1,53 +1,28 @@
-# Task 17 Створення коду Terraform для Flux на kind_cluster
+# Тиждень 7, задача 3. Налаштування зв'язки Flux та kind_cluster за допомогою Terraform
 
-1. В `main.tf` змінимо модуль що відповідає за розгортання кластеру згідно з завданням. Але оберемо гілку модуля, що може працювати без створення файлу `kubeconfig` та використовую інший вид авторизації
+1. У `main.tf` використаємо наступні модулі ментора, попередньо зробивши fork кожного:
 
 ```hcl
 module "kind_cluster" {
   source = "github.com/den-vasyliev/tf-kind-cluster?ref=cert_auth"
 }
 ```
+```hcl
+module "tls_private_key" {
+  source  = "github.com/sbazanov/tf-hashicorp-tls-keys"
+}
+```
+```hcl
+module "github_repository" {
+  source  = "github.com/sbazanov/tf-github-repository"
+}
+```
+
 2. Виконаємо ініціалізацію terraform:
 ```sh
 ✗ terraform init
 Terraform has been successfully initialized!
 ```
-- В процесі отримуємо помилку:
-```sh
-Error: Failed to query available provider packages
-│ 
-│ Could not retrieve the list of available versions for provider fluxcd/flux: locked provider registry.terraform.io/fluxcd/flux 1.2.1 does not match configured version constraint 1.0.0-rc.3; must use terraform init -upgrade to
-│ allow selection of new versions
-```
-- Щоб уникнути ціє помилки робимо модуль локальним та змінюємо у файлі `terraform.tf` версію провайдера на `1.2.1`
-```hcl
-  required_providers {
-    flux = {
-      source  = "fluxcd/flux"
-      version = "1.2.1"
-    }
-```
-- Виконуємо оновлення провайдера командою:
-```sh
-terraform init -upgrade
-```
-- Перевіримо які модулі були створені щоб видалити повністю файл стану:
-```sh
-✗ terraform state list
-module.flux_bootstrap.flux_bootstrap_git.this
-module.kind_cluster.kind_cluster.this
-✗ terraform state rm module.flux_bootstrap.flux_bootstrap_git.this
-Removed module.flux_bootstrap.flux_bootstrap_git.this
-Successfully removed 1 resource instance(s).
-✗ terraform state rm module.kind_cluster.kind_cluster.this        
-Removed module.kind_cluster.kind_cluster.this
-Successfully removed 1 resource instance(s).
-✗ kind get clusters            
-kind-cluster
-✗ kind delete clusters kind-cluster
-Deleted clusters: ["kind-cluster"]
-```
-
 
 3. Перевіримо код 
 ```sh
@@ -71,33 +46,13 @@ module.kind_cluster.kind_cluster.this
 module.tls_private_key.tls_private_key.this
 ```
 
-6. Розміщення файлу в [bucket](https://console.cloud.google.com/storage/browser)  
-Щоб розмістити файл state в бакеті, ви можете використовувати команду terraform init з опцією --backend-config. Наприклад, щоб розмістити файл state в бакеті Google Cloud Storage, ви можете виконати наступну команду:
+6. Для моніторингу роботи Flux на рівні його логів встановимо [CLI Flux client](https://fluxcd.io/flux/installation/)
 ```sh
-# Створимо bucket:
-$ gsutil mb gs://vit-secret
-Creating gs://vit-secret/...
-
-# Перевірити вміст диску:
-$ gsutil ls gs://vit-secret
-gs://vit-secret/terraform/
-```
-7. Як створити bucket [читаємо документацію](https://developer.hashicorp.com/terraform/language/settings/backends/gcs#example-configuration) та додаємо до основного файлу конфігурації наступний код:
-
-```hcl
-terraform {
-  backend "gcs" {
-    bucket  = "tf-state-prod"
-    prefix  = "vit-secret"
-  }
-}
-```
-```sh
-$ terraform init
-$ tf show | more
+✗ curl -s https://fluxcd.io/install.sh | bash
+✗ flux get all
 ```
 
-8. Перевіримо список ns по стан поду системи flux:
+7. Перевіримо список ns:
 ```sh
 ✗ k get ns
 NAME                 STATUS   AGE
@@ -115,47 +70,47 @@ kustomize-controller-796b4fbf5d-jxqdx      1/1     Running   0          16m
 notification-controller-78f97c759b-c8vpr   1/1     Running   0          16m
 source-controller-7bc7c48d8d-c8kxk         1/1     Running   0          16m
 ``` 
-9. Для зручності встановимо [CLI клієнт Flux](https://fluxcd.io/flux/installation/)
-```sh
-✗ curl -s https://fluxcd.io/install.sh | bash
-✗ flux get all
-```
 
-10. Додамо в репозиторій каталог `demo` та файл `ns.yaml` що містить маніфест довільного `namespace`  
+8. Додамо в репозиторій каталог `demo` та файл `new_ns.yaml`, що містить маніфест довільного `namespace`  
 ```sh
-$ k ai "маніфест ns demo"
-✨ Attempting to apply the following manifest:
+$ cat new_ns.yaml
 
 apiVersion: v1
 kind: Namespace
 metadata:
   name: demo
 ```
-- Після зміни стану репозиторію контролер Flux їх виявить:
-    - зробить git clone  
-    - підготує артефакт   
-    - виконає узгодження поточного стану IC   
-
-У даному випадку буде створено `ns demo`:
+- Після зміни стану репозиторію контролер Flux їх виявить та одразу синхронізує кластер згідно змін
+  
+У даному випадку буде створено namespace `demo`:
 ```sh
 
+- Після додавання файлу у репо Flux запутимо моніторинг його логів: 
 ✗ flux logs -f
-2023-12-19T08:36:29.686Z info GitRepository/flux-system.flux-system - stored artifact for commit 'Create ns.yaml' 
-2023-12-19T08:37:31.484Z info GitRepository/flux-system.flux-system - garbage collected 1 artifacts 
 
+2024-01-23T15:10:00.025Z info GitRepository/flux-system.flux-system - stored artifact for commit 'Create new_ns.yaml' 
+2024-01-23T15:10:00.765Z info Kustomization/flux-system.flux-system - server-side apply for cluster definitions completed 
+2024-01-23T15:10:00.919Z info Kustomization/flux-system.flux-system - server-side apply completed 
+2024-01-23T15:10:00.952Z info Kustomization/flux-system.flux-system - Reconciliation finished in 900.71219ms, next run in 10m0s
+
+- Перевіримо чи додався новий неймспейс:
 ✗ k get ns 
 NAME                 STATUS   AGE
-default              Active   23m
-demo                 Active   4s
+default              Active   152m
+demo                 Active   25m
+flux-system          Active   151m
+kube-node-lease      Active   152m
+kube-public          Active   152m
+kube-system          Active   152m
 ```
-Це був приклад як Flux може керувати конфігурацією ІС Kubernetes
+Новий ns додався. Все працює.
 
-11. Застосуємо CLI Flux для генерації маніфестів необхідних ресурсів:
+9. Згенеруємо маніфести необхідних ресурсів нашого PET проєкту за допомогою CLI Flux:
 ```sh
-$ git clone https://github.com/vit-um/flux-gitops.git
-$ cd ../flux-gitops 
+$ git clone https://github.com/sbazanov/flux-gitops-repo.git
+$ cd ../flux-gitops-repo 
 $ flux create source git kbot \
-    --url=https://github.com/vit-um/kbot \
+    --url=https://github.com/sbazanov/kbot \
     --branch=main \
     --namespace=demo \
     --export > clusters/demo/kbot-gr.yaml
@@ -166,24 +121,18 @@ $ flux create helmrelease kbot \
     --interval=1m \
     --export > clusters/demo/kbot-hr.yaml
 $ git add .
-$ git commit -m"add manifest"
+$ git commit -m"add Helm release manifest"
 $ git push
 
 $ flux logs -f
-2023-12-19T08:58:45.061Z info GitRepository/flux-system.flux-system - stored artifact for commit 'add manifest' 
-2023-12-19T08:58:45.466Z info Kustomization/flux-system.flux-system - server-side apply for cluster definitions completed 
-2023-12-19T08:58:45.559Z info Kustomization/flux-system.flux-system - server-side apply completed 
-2023-12-19T08:58:45.596Z info Kustomization/flux-system.flux-system - Reconciliation finished in 498.659581ms, next run in 10m0s 
-2023-12-19T08:59:46.501Z info GitRepository/flux-system.flux-system - garbage collected 1 artifacts 
+2024-01-23T15:19:00.025Z info GitRepository/flux-system.flux-system - stored artifact for commit 'add Helm release manifest' 
+2024-01-23T15:19:00.765Z info Kustomization/flux-system.flux-system - server-side apply for cluster definitions completed 
+2024-01-23T15:19:00.919Z info Kustomization/flux-system.flux-system - server-side apply completed 
+2024-01-23T15:19:00.952Z info Kustomization/flux-system.flux-system - Reconciliation finished in 900.71219ms, next run in 10m0s
 ```
-
-11. Перевіримо наявність пода з нашим PET-проектом та розберемо кластер:
 ```sh
-$ k get po -n demo
-NAME                         READY   STATUS             RESTARTS       AGE
-kbot-helm-6796599d7c-sqwx7   0/1     CrashLoopBackOff   7 (100s ago)   12m
-k describe po -n demo | grep Warning
-  Warning  BackOff    4m35s (x47 over 14m)  kubelet            Back-off restarting failed container kbot in pod kbot-helm-6796599d7c-sqwx7_demo(401ca7a7-2b0c-4a27-b81c-e053936cd9ed)
+$ kubectl get po -n demo
+No resources found in demo namespace.
 
 $ tf destroy
 $ tf state list 
