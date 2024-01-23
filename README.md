@@ -135,5 +135,3 @@ $ kubectl get po -n demo
 No resources found in demo namespace.
 
 $ tf destroy
-$ tf state list 
-```
